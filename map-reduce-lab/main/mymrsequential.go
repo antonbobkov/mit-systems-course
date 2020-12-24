@@ -13,13 +13,28 @@ import "os"
 import "log"
 import "io/ioutil"
 import "hash/fnv"
+import "sort"
+
+// for sorting by key.
+type ByKey []mr.KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 type MapFunc func(string, string) []mr.KeyValue
+type ReduceFunc func(string, []string) string
 
 type Task struct {
 	is_map_task bool
+	
 	map_file string
 	map_task_id int
+
+	reduce_task_id int
+	
+	map_num int
 	reduce_num int
 }
 
@@ -59,20 +74,73 @@ func ExecuteMapTask(t Task, mapf MapFunc) {
 	}
 }
 
+func ReadKVPairs(file_name) []mr.KeyValue {
+	
+}
+
+func ExecuteReduceTask(t Task, reducef ReduceFunc) {
+	intermediate := []mr.KeyValue{}
+	for m := 0; m < t.map_num; m++ {
+		in_file_name := fmt.Sprintf("intermediate-map-%v-bucket-%v.txt", m, t.reduce_task_id)
+
+		// TODO: read kv pair
+
+		intermediate = append(intermediate, kv)
+
+		sort.Sort(ByKey(intermediate))
+
+		oname := fmt.Sprintf("mr-out-%v", t.reduce_task_id)
+		ofile, _ := os.Create(oname)
+
+		i := 0
+		for i < len(intermediate) {
+			j := i + 1
+			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+				j++
+			}
+			values := []string{}
+			for k := i; k < j; k++ {
+				values = append(values, intermediate[k].Value)
+			}
+			output := reducef(intermediate[i].Key, values)
+
+			// this is the correct format for each line of Reduce output.
+			fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+			i = j
+		}
+
+		ofile.Close()
+	}
+}
+
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
 		os.Exit(1)
 	}
 
-	mapf, _ := loadPlugin(os.Args[1])
+	mapf, reducef := loadPlugin(os.Args[1])
 	reduce_num := 3
-	
+	map_num := len(os.Args[2:])
+		
 	for i, filename := range os.Args[2:] {
-		map_task_id := i
-		t := Task{true, filename, map_task_id, reduce_num}
+		t := Task{}
+		t.is_map_task = true
+		t.map_file = filename
+		t.map_task_id = i
+		t.reduce_num = reduce_num
+		
 		ExecuteMapTask(t, mapf)
 	}
+
+	for i := 0; i < reduce_num; i++ {
+		t := Task{}
+		t.is_map_task = false
+		t.map_num = map_num
+
+		ExecuteReduceTask(t, reducef)
+  }
 }
 
 //
